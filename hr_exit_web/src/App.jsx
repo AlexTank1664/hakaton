@@ -9,7 +9,9 @@ import {
   History, 
   PlusCircle, 
   FileText,
-  Download
+  Download,
+  Eye,
+  Edit3
 } from "lucide-react";
 
 export default function App() {
@@ -22,6 +24,7 @@ export default function App() {
   const [error, setError] = useState(null);
   const [history, setHistory] = useState([]);
   const [selectedId, setSelectedId] = useState(null);
+  const [viewMode, setViewMode] = useState("highlight"); // "highlight" | "edit"
 
   const fetchHistory = async () => {
     try {
@@ -43,7 +46,10 @@ export default function App() {
     const file = e.target.files[0];
     if (file) {
       const reader = new FileReader();
-      reader.onload = (event) => setText(event.target.result);
+      reader.onload = (event) => {
+        setText(event.target.result);
+        setViewMode("edit");
+      };
       reader.readAsText(file);
     }
   };
@@ -62,6 +68,7 @@ export default function App() {
       const json = await res.json();
       setData(json);
       setSelectedId(null);
+      setViewMode("highlight");
       fetchHistory();
     } catch (err) {
       setError(err.message || "Не удалось соединиться с бэкендом");
@@ -74,6 +81,7 @@ export default function App() {
     setSelectedId(item.id);
     setText(item.raw_text);
     setData(item.parsed_json);
+    setViewMode("highlight");
   };
 
   const handleNewAnalysis = () => {
@@ -81,6 +89,7 @@ export default function App() {
     setText("");
     setData(null);
     setError(null);
+    setViewMode("edit");
   };
 
   const handleDownloadJson = () => {
@@ -92,6 +101,117 @@ export default function App() {
     a.download = `exit_passport_${selectedId || "latest"}.json`;
     a.click();
     URL.revokeObjectURL(url);
+  };
+
+  // Поиск и разметка цитат в оригинальном тексте
+  const renderHighlightedText = (rawText, parsedData) => {
+    if (!parsedData) return rawText;
+
+    const spans = [];
+
+    // Красные: цитаты проблем
+    if (parsedData.pain_points) {
+      parsedData.pain_points.forEach((p) => {
+        if (p.quote && p.quote.trim().length > 3) {
+          const idx = rawText.toLowerCase().indexOf(p.quote.toLowerCase().trim());
+          if (idx !== -1) {
+            spans.push({
+              start: idx,
+              end: idx + p.quote.trim().length,
+              type: "danger",
+              label: `Проблема: ${p.issue}`
+            });
+          }
+        }
+      });
+    }
+
+    // Зеленые: цитаты положительных практик
+    if (parsedData.best_practices) {
+      parsedData.best_practices.forEach((bp) => {
+        if (bp.anchor_quote && bp.anchor_quote.trim().length > 3) {
+          const idx = rawText.toLowerCase().indexOf(bp.anchor_quote.toLowerCase().trim());
+          if (idx !== -1) {
+            spans.push({
+              start: idx,
+              end: idx + bp.anchor_quote.trim().length,
+              type: "success",
+              label: `Плюс: ${bp.practice}`
+            });
+          }
+        }
+      });
+    }
+
+    // Оранжевые: нейтральные / ключевые факты (причина ухода)
+    if (parsedData.exit_reason && parsedData.exit_reason.trim().length > 3) {
+      const idx = rawText.toLowerCase().indexOf(parsedData.exit_reason.toLowerCase().trim());
+      if (idx !== -1) {
+        spans.push({
+          start: idx,
+          end: idx + parsedData.exit_reason.trim().length,
+          type: "warning",
+          label: `Причина ухода: ${parsedData.exit_reason}`
+        });
+      }
+    }
+
+    if (spans.length === 0) {
+      return <span className="whitespace-pre-wrap">{rawText}</span>;
+    }
+
+    // Сортировка и удаление взаимных наложений
+    spans.sort((a, b) => a.start - b.start);
+    const filteredSpans = [];
+    let lastEnd = 0;
+    for (const span of spans) {
+      if (span.start >= lastEnd) {
+        filteredSpans.push(span);
+        lastEnd = span.end;
+      }
+    }
+
+    // Сборка фрагментов JSX
+    const elements = [];
+    let cursor = 0;
+
+    filteredSpans.forEach((span, i) => {
+      if (span.start > cursor) {
+        elements.push(
+          <span key={`text-${i}`} className="whitespace-pre-wrap">
+            {rawText.slice(cursor, span.start)}
+          </span>
+        );
+      }
+
+      let badgeStyle = "bg-rose-100 text-rose-900 border-b-2 border-rose-400";
+      if (span.type === "success") {
+        badgeStyle = "bg-emerald-100 text-emerald-900 border-b-2 border-emerald-400";
+      } else if (span.type === "warning") {
+        badgeStyle = "bg-amber-100 text-amber-900 border-b-2 border-amber-400";
+      }
+
+      elements.push(
+        <mark
+          key={`mark-${i}`}
+          title={span.label}
+          className={`${badgeStyle} px-1 py-0.5 rounded cursor-help font-medium transition-colors`}
+        >
+          {rawText.slice(span.start, span.end)}
+        </mark>
+      );
+      cursor = span.end;
+    });
+
+    if (cursor < rawText.length) {
+      elements.push(
+        <span key="text-last" className="whitespace-pre-wrap">
+          {rawText.slice(cursor)}
+        </span>
+      );
+    }
+
+    return elements;
   };
 
   const getRiskBadge = (zone) => {
@@ -107,6 +227,7 @@ export default function App() {
 
   return (
     <div className="flex h-screen bg-slate-50 text-slate-900 overflow-hidden">
+      {/* Левый Сайдбар */}
       <aside className="w-80 bg-white border-r border-slate-200 flex flex-col shrink-0">
         <div className="p-4 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center space-x-2.5">
@@ -163,11 +284,12 @@ export default function App() {
         </div>
       </aside>
 
+      {/* Основная рабочая область */}
       <div className="flex-1 flex flex-col min-w-0 overflow-y-auto">
         <header className="bg-white border-b border-slate-200 px-8 py-3.5 flex items-center justify-between sticky top-0 z-10">
           <div>
             <h1 className="text-base font-bold text-slate-900">
-              {selectedId ? `Просмотр отчета #${selectedId}` : "Новый анализ Exit Interview"}
+              {selectedId ? `Просмотр отчета #${selectedId}` : "Анализ Exit Interview"}
             </h1>
             <p className="text-xs text-slate-500">Автоматический аудит причин ухода на базе YandexGPT</p>
           </div>
@@ -183,22 +305,78 @@ export default function App() {
         </header>
 
         <main className="p-8 max-w-6xl w-full mx-auto grid grid-cols-1 lg:grid-cols-12 gap-8">
+          {/* Левая колонка: Текст с интерактивной разметкой */}
           <section className="lg:col-span-5 flex flex-col space-y-4">
             <div className="bg-white p-6 rounded-2xl border border-slate-200 shadow-sm flex-1 flex flex-col">
               <div className="flex items-center justify-between mb-3">
-                <h2 className="font-semibold text-slate-800 text-xs tracking-wide uppercase">Сырой диалог</h2>
-                <label className="cursor-pointer text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center space-x-1">
-                  <Upload className="w-3.5 h-3.5" />
-                  <span>Загрузить .txt</span>
-                  <input type="file" accept=".txt" onChange={handleFileUpload} className="hidden" />
-                </label>
+                <h2 className="font-semibold text-slate-800 text-xs tracking-wide uppercase">
+                  Транскрипт интервью
+                </h2>
+                <div className="flex items-center space-x-2">
+                  {data && (
+                    <div className="flex bg-slate-100 rounded-lg p-0.5 border border-slate-200">
+                      <button
+                        onClick={() => setViewMode("highlight")}
+                        className={`px-2 py-1 text-[11px] font-medium rounded-md flex items-center space-x-1 ${
+                          viewMode === "highlight" ? "bg-white text-indigo-600 shadow-xs" : "text-slate-500 hover:text-slate-700"
+                        }`}
+                        title="Цветная разметка"
+                      >
+                        <Eye className="w-3 h-3" />
+                        <span>Разметка</span>
+                      </button>
+                      <button
+                        onClick={() => setViewMode("edit")}
+                        className={`px-2 py-1 text-[11px] font-medium rounded-md flex items-center space-x-1 ${
+                          viewMode === "edit" ? "bg-white text-indigo-600 shadow-xs" : "text-slate-500 hover:text-slate-700"
+                        }`}
+                        title="Редактировать текст"
+                      >
+                        <Edit3 className="w-3 h-3" />
+                        <span>Правка</span>
+                      </button>
+                    </div>
+                  )}
+                  <label className="cursor-pointer text-xs text-indigo-600 hover:text-indigo-800 font-medium flex items-center space-x-1">
+                    <Upload className="w-3.5 h-3.5" />
+                    <span>.txt</span>
+                    <input type="file" accept=".txt" onChange={handleFileUpload} className="hidden" />
+                  </label>
+                </div>
               </div>
-              <textarea
-                className="w-full flex-1 min-h-[360px] p-3.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none leading-relaxed"
-                value={text}
-                onChange={(e) => setText(e.target.value)}
-                placeholder="Вставьте диалог exit-интервью..."
-              />
+
+              {/* Легенда подсветки */}
+              {data && viewMode === "highlight" && (
+                <div className="flex items-center space-x-2 mb-3 text-[10px] bg-slate-50 p-2 rounded-lg border border-slate-200">
+                  <span className="flex items-center space-x-1 text-rose-700 font-medium">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-rose-300 inline-block"></span>
+                    <span>Проблема</span>
+                  </span>
+                  <span className="flex items-center space-x-1 text-emerald-700 font-medium">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-emerald-300 inline-block"></span>
+                    <span>Плюс</span>
+                  </span>
+                  <span className="flex items-center space-x-1 text-amber-700 font-medium">
+                    <span className="w-2.5 h-2.5 rounded-sm bg-amber-300 inline-block"></span>
+                    <span>Нейтрально</span>
+                  </span>
+                </div>
+              )}
+
+              {/* Отображение разметки или поля редактирования */}
+              {data && viewMode === "highlight" ? (
+                <div className="w-full flex-1 min-h-[360px] p-3.5 text-xs bg-slate-50 border border-slate-200 rounded-xl overflow-y-auto leading-relaxed text-slate-800">
+                  {renderHighlightedText(text, data)}
+                </div>
+              ) : (
+                <textarea
+                  className="w-full flex-1 min-h-[360px] p-3.5 text-xs bg-slate-50 border border-slate-200 rounded-xl focus:ring-2 focus:ring-indigo-500 focus:outline-none resize-none leading-relaxed"
+                  value={text}
+                  onChange={(e) => setText(e.target.value)}
+                  placeholder="Вставьте диалог exit-интервью..."
+                />
+              )}
+
               {error && (
                 <div className="mt-3 p-3 bg-rose-50 text-rose-600 text-xs rounded-lg border border-rose-200">
                   {error}
@@ -224,6 +402,7 @@ export default function App() {
             </div>
           </section>
 
+          {/* Правая колонка: Результат */}
           <section className="lg:col-span-7">
             {data ? (
               <div className="space-y-6">
