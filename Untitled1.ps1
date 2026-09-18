@@ -1,16 +1,16 @@
-﻿# Корневой путь для хакатона
-$BasePath = "C:\hakaton"
-$ProjectName = "hr_exit_engine"
-$TargetDir = Join-Path -Path $BasePath -ChildPath $ProjectName
+﻿$TargetDir = "C:\hakaton\hr_exit_engine"
 
-Write-Host "Создание каталога: $TargetDir..." -ForegroundColor Cyan
+Write-Host "Развертывание проекта в $TargetDir..." -ForegroundColor Cyan
 
-# Создание директорий
-New-Item -ItemType Directory -Force -Path "$TargetDir/app" | Out-Null
-New-Item -ItemType Directory -Force -Path "$TargetDir/data" | Out-Null
+New-Item -ItemType Directory -Force -Path "$TargetDir\app" | Out-Null
+New-Item -ItemType Directory -Force -Path "$TargetDir\data" | Out-Null
+
+function Write-Utf8File($path, $content) {
+    [System.IO.File]::WriteAllText($path, $content, [System.Text.Encoding]::UTF8)
+}
 
 # 1. requirements.txt
-@"
+$reqs = @'
 fastapi==0.111.0
 uvicorn==0.30.1
 pydantic==2.7.4
@@ -20,25 +20,25 @@ requests==2.32.3
 python-dotenv==1.0.1
 pymorphy3==2.0.2
 pymorphy3-dicts-ru==2.4.417127.4579844
-"@ | Out-File -FilePath "$TargetDir/requirements.txt" -Encoding utf8
+'@
+Write-Utf8File "$TargetDir\requirements.txt" $reqs
 
 # 2. .env.example
-@"
+$envEx = @'
 YANDEX_API_KEY=your_api_key_here
 YANDEX_FOLDER_ID=your_folder_id_here
 API_URL=https://llm.api.cloud.yandex.net/foundationModels/v1/completion
 BACKEND_HOST=backend
 BACKEND_PORT=8000
-"@ | Out-File -FilePath "$TargetDir/.env.example" -Encoding utf8
+'@
+Write-Utf8File "$TargetDir\.env.example" $envEx
+Copy-Item -Path "$TargetDir\.env.example" -Destination "$TargetDir\.env" -Force
 
-# 3. .env (по умолчанию копирует шаблон)
-Copy-Item -Path "$TargetDir/.env.example" -Destination "$TargetDir/.env"
+# 3. app/__init__.py
+Write-Utf8File "$TargetDir\app\__init__.py" "# hr_exit_engine"
 
-# 4. app/__init__.py
-"# hr_exit_engine app package" | Out-File -FilePath "$TargetDir/app/__init__.py" -Encoding utf8
-
-# 5. app/schemas.py
-@"
+# 4. app/schemas.py
+$schemas = @'
 from enum import Enum
 from typing import List
 from pydantic import BaseModel, Field
@@ -68,10 +68,11 @@ class ExitInterviewAnalysis(BaseModel):
 
 class AnalyzeRequest(BaseModel):
     text: str = Field(..., min_length=10, description="Транскрипт интервью")
-"@ | Out-File -FilePath "$TargetDir/app/schemas.py" -Encoding utf8
+'@
+Write-Utf8File "$TargetDir\app\schemas.py" $schemas
 
-# 6. app/nlp_processor.py
-@"
+# 5. app/nlp_processor.py
+$nlp = @'
 import re
 from collections import Counter
 import pymorphy3
@@ -100,10 +101,11 @@ def analyze_raw_text(text: str) -> dict:
         "word_count": len(words),
         "cluster_frequencies": detected_clusters
     }
-"@ | Out-File -FilePath "$TargetDir/app/nlp_processor.py" -Encoding utf8
+'@
+Write-Utf8File "$TargetDir\app\nlp_processor.py" $nlp
 
-# 7. app/yandex_client.py
-@"
+# 6. app/yandex_client.py
+$yandex = @'
 import os
 import json
 import re
@@ -140,12 +142,12 @@ def call_yandex_gpt(transcript: str, frequency_hints: dict) -> ExitInterviewAnal
     if not YANDEX_API_KEY or not YANDEX_FOLDER_ID:
         raise ValueError("YANDEX_API_KEY или YANDEX_FOLDER_ID не заданы в .env")
 
-    prompt_text = f'''Контекст частотного анализа лемм в тексте: {json.dumps(frequency_hints, ensure_ascii=False)}
+    prompt_text = f"""Контекст частотного анализа лемм в тексте: {json.dumps(frequency_hints, ensure_ascii=False)}
 
 Транскрипт интервью:
 \"\"\"{transcript}\"\"\"
 
-Сгенерируй JSON строго по схеме:'''
+Сгенерируй JSON строго по схеме:"""
 
     payload = {
         "modelUri": f"gpt://{YANDEX_FOLDER_ID}/yandexgpt/latest",
@@ -177,10 +179,11 @@ def call_yandex_gpt(transcript: str, frequency_hints: dict) -> ExitInterviewAnal
 
     parsed_dict = json.loads(cleaned_json)
     return ExitInterviewAnalysis(**parsed_dict)
-"@ | Out-File -FilePath "$TargetDir/app/yandex_client.py" -Encoding utf8
+'@
+Write-Utf8File "$TargetDir\app\yandex_client.py" $yandex
 
-# 8. app/main.py
-@"
+# 7. app/main.py
+$mainApp = @'
 from fastapi import FastAPI, HTTPException
 from app.schemas import AnalyzeRequest, ExitInterviewAnalysis
 from app.nlp_processor import analyze_raw_text
@@ -200,10 +203,11 @@ def analyze_interview(request: AnalyzeRequest):
         return result
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))
-"@ | Out-File -FilePath "$TargetDir/app/main.py" -Encoding utf8
+'@
+Write-Utf8File "$TargetDir\app\main.py" $mainApp
 
-# 9. ui.py
-@"
+# 8. ui.py
+$uiCode = @'
 import os
 import streamlit as st
 import requests
@@ -217,8 +221,8 @@ API_ENDPOINT = f"http://{BACKEND_HOST}:{BACKEND_PORT}/analyze"
 st.title("🚀 HR Exit Insight Engine (YandexGPT)")
 st.caption("Аналитический пайплайн автоматической обработки Exit-интервью")
 
-sample_text = '''— Уходишь?
-— Да, перехожу к конкурентам. Знаешь, сама работа классная, но убивает вот это: мы полгода обсуждаем ТЗ, а потом переделываем за неделю. Процесс согласования — это ад. Зато очень нравится, как устроен онбординг, ментор помогал реально, не то что в других местах...'''
+sample_text = """— Уходишь?
+— Да, перехожу к конкурентам. Знаешь, сама работа классная, но убивает вот это: мы полгода обсуждаем ТЗ, а потом переделываем за неделю. Процесс согласования — это ад. Зато очень нравится, как устроен онбординг, ментор помогал реально, не то что в других местах..."""
 
 col_left, col_right = st.columns([1, 1])
 
@@ -266,10 +270,11 @@ if process_btn and input_text:
                 st.error(f"Ошибка бэкенда ({resp.status_code}): {resp.text}")
         except Exception as ex:
             st.error(f"Не удалось связаться с бэкендом: {ex}")
-"@ | Out-File -FilePath "$TargetDir/ui.py" -Encoding utf8
+'@
+Write-Utf8File "$TargetDir\ui.py" $uiCode
 
-# 10. Dockerfile
-@"
+# 9. Dockerfile
+$dockerfile = @'
 FROM python:3.11-slim
 
 WORKDIR /app
@@ -285,10 +290,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 COPY . .
 
 EXPOSE 8000 8501
-"@ | Out-File -FilePath "$TargetDir/Dockerfile" -Encoding utf8
+'@
+Write-Utf8File "$TargetDir\Dockerfile" $dockerfile
 
-# 11. docker-compose.yml
-@"
+# 10. docker-compose.yml
+$compose = @'
 version: "3.8"
 
 services:
@@ -299,4 +305,50 @@ services:
     env_file:
       - .env
     ports:
-      - "800
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./data:/app/data
+    restart: unless-stopped
+
+  frontend:
+    build: .
+    container_name: hr_exit_frontend
+    command: streamlit run ui.py --server.port 8501 --server.address 0.0.0.0
+    env_file:
+      - .env
+    environment:
+      - BACKEND_HOST=backend
+      - BACKEND_PORT=8000
+    ports:
+      - "8501:8501"
+    depends_on:
+      - backend
+    volumes:
+      - ./ui.py:/app/ui.py
+    restart: unless-stopped
+'@
+Write-Utf8File "$TargetDir\docker-compose.yml" $compose
+
+# 11. README.md
+$readme = @'
+# HR Exit Insight Engine (MVP)
+
+Прототип микросервисной системы анализа exit-интервью с использованием YandexGPT, FastAPI и Streamlit.
+
+## Быстрый запуск
+
+1. Заполните учетные данные в `.env`:
+   YANDEX_API_KEY=ваш_ключ
+   YANDEX_FOLDER_ID=ваш_folder_id
+
+2. Соберите и запустите контейнеры:
+   docker compose up --build
+
+3. Доступ:
+   - Web UI: http://localhost:8501
+   - API Docs: http://localhost:8000/docs
+'@
+Write-Utf8File "$TargetDir\README.md" $readme
+
+Write-Host "Все файлы успешно сгенерированы в $TargetDir!" -ForegroundColor Green
